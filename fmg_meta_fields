@@ -1,0 +1,369 @@
+#!/usr/bin/env perl
+
+use strict;
+use warnings;
+use 5.010;
+use Pod::Usage;
+use Getopt::Long;
+use Term::ANSIColor;
+use Carp;
+use Mojo::UserAgent;
+use JSON;
+
+
+my %args;
+GetOptions(
+    \%args,
+    'fmg=s',
+    'username=s',
+    'password=s',
+    'insecure',
+    'help' => sub { pod2usage(1) }
+) or pod2usage(2);
+
+=pod
+
+=encoding UTF-8
+
+=head1 NAME
+
+ftnt_license_registration - extract, register, and download Fortinet licenses.
+
+=head1 VERSION
+
+version .3
+
+=head1 SYNOPSIS
+
+    # Register FTNT licenses straight from zip files.
+    # FortiCloud credentials stored in ~/.ftnt/ftnt_cloud_api
+    # Licenses will be downloaded into the working directory
+    ./ftnt_license_registration ~/Documents/licenses/*.zip
+
+    # Specify the directory to store licenses
+    ./ftnt_license_registration --license-dir ~/Documents/licenses
+
+    # Don't download licenses, just register 
+    ./ftnt_license_registration --no-licenses
+
+    # API user/pass can be specified as ENV vars
+    export FORTICLOUD_API_USERNAME='<user>'
+    export FORTICLOUD_API_PASSWORD='<pass>'
+    ./ftnt_license_registration
+
+    # Or on the command line
+    ./ftnt_license_registration --username '<user>' --pasword '<pass>'
+
+=head1 OPTIONS
+
+=over
+
+=item -u|--username I<user> - the FortiCloud API username
+
+=item -p|--password I<pass> - the FortiCloud API password
+
+=item -l|--license-dir I<path> - the path to save registered licenses
+
+=item -n|--no-licenses - don't download licenses
+
+=item -n|--ipv4-addresses - assign an IPv4 address when registering (see section below for more details)
+
+=item -h|--help - print usage information
+
+=back
+
+
+=head1 DESCRIPTION
+
+The 'Fortinet License Registration' script allows you to easly bulk-register and download Fortinet licenses.
+
+The licenses come in email as PDFs inside zip archives. This script takes one or more zip files and
+
+=over 1
+
+=item Opens the zip file in memory
+
+=item Reads the PDFs inside
+
+=item Extracts the registration code
+
+=item Registers the code into the FortiCare support portal
+
+=back
+
+=head1 REQUIREMENTS
+
+You'll need the following modules, preferably installed using the more modern L<cpanminus|https://metacpan.org/pod/App::cpanminus>:
+
+    sh$ cpanm Archive::Zip CAM::PDF Mojo::UserAgent
+
+or the old CPAN client:
+
+    sh$ cpan Archive::Zip CAM::PDF Mojo::UserAgent
+
+=head1 AUTHENTICATION
+
+The script uses version 3 of the registration API. This uses OAuth tokens generated from IAM API username/passwords. You can create IAM users L<here|https://support.fortinet.com/iam/#/api-user>.
+
+Once you have your credentials, the script will search for them in three places:
+
+=over 
+
+=item In ~/.ftnt/ftnt_cloud_api formatted as <username>:<password>
+
+=over
+
+=item  Lines beginning with '#' are skipped
+
+=back
+
+=item In the environment variabes C<FORTICLOUD_API_USER> and C<FORTICLOUD_API_PASSWORD>
+
+=item In the command line arguments C<-u|--username> and C<-p|--password>.
+
+=back
+
+If the credentials are available in multiple places, local dotfile beats environment variable beats commandline.
+
+Note that the password appears to always have an exclaimation mark, so be sure to enclose in single quotes if you're using the environment variable or command line methods.
+
+=head1 IPv4 ADDRESSES
+
+The C<--ipv4-addresses> argument takes two different arguments: a C<file> or and C<ipv4_address>
+
+Some devices do not take an IP address (for example, FortiGates). This script will not discriminate, and will still try to apply the IP address. Recommendation it that if you're using this command, separate the licenses that require an IP into a different folder. You can this run this script across that folder with this --ipv4-addresses argument.
+
+=head2 --ipv4-addresses <file>
+
+When given a file, the script opens it and reads in each line, expecting it to be an IPv4 address. If it's not an IPv4 address, it skips the
+ line. Any line starting with '#' is considered a comment and skipped.
+
+It then uses one of these IPv4 addresses in each of the license registration requests. If there 'n' licenses and 'm' IPv4 addresses in the file, then the last (n - m) licenses will not include an IPv4 addresses.
+
+=head2 --ipv4-addresses <ipv4_address>
+
+If it cannot open a file, the script will then check to see if it is an IPv4 address. It will then include this address in every license registration request. This is useful if you're registering the licenses for a lab where the IP addressing matches across each lab 'pod'.
+
+=head1 LICENSE DOWNLOAD
+
+The registration API generally returns the license keys for the codes you register with a couple of caveats:
+
+=over
+
+=item Some aren't returned, for example FortiManager licneses
+
+=item Some devices require an IP specification, which will not have been done rendering the license useless.
+
+=back
+
+You will get warnings in the console for registration codes that do not return a license.
+
+=cut
+
+### Log Helpers###
+
+sub log_output {
+    print STDERR colored('- ', 'bold green');
+    say STDERR join ' ', @_;
+}
+
+sub log_error {
+    say STDERR colored('- '.join(' ', @_), 'bold red');
+    exit(1);
+}
+
+sub log_warning {
+    say STDERR colored('- '.join(' ', @_), 'bold yellow');
+}
+
+log_error "No --fmg specified" unless $args{fmg};
+
+# JSON file is the last argument
+my $json_file = shift or log_error "No JSON file specififed";
+my $metavar_json = get_metavar_json($json_file);
+
+log_output "Retreived metavars from JSON file $json_file";
+
+# Try to get the credentials from the dotfiles in the $HOME/.ftnt dir
+my %dotfile_creds = dotfile_creds();
+
+log_output "Authenticating to FortiManager";
+
+# Get our API access token
+my $api_json_res = fmg_api_call(
+    fmg => $args{fmg},
+    method => 'exec',
+    insecure => $args{insecure},
+    url => '/sys/login/user',
+    data => {
+        user => $dotfile_creds{username} // $args{username} // $ENV{FMG_API_USER},
+        passwd  => $dotfile_creds{password} // $args{password} // $ENV{FMG_API_PASS},
+    }
+);
+
+my $session_token = $api_json_res->{session} or log_error "No session token received";
+
+log_output "Creating metavars";
+# Create the metavars
+create_metavars($metavar_json);
+create_device_metavars($metavar_json);
+
+
+sub get_metavar_json {
+    my ($json_file) = @_;
+    my $json;
+
+    open(my $fh, "<:encoding(UTF-8)", $json_file) or croak "Could not open JSON file '$json_file'";
+
+    {
+        local $/;
+        $json = <$fh>;
+        close $fh;
+    }
+
+    return decode_json($json);
+}
+
+sub create_metavars {
+    my ($metavars) = @_;
+
+    my @metavar_keys = qw( importance length name status );
+
+    if (!defined $metavars->{metavars}) {
+        log_warning "No 'metavars' object in JSON";
+        return;
+    }
+
+    METAVAR:
+    for my $metavar (@{ $metavars->{metavars} }) {
+        # First some checks and setting defaults
+        if (!defined $metavar->{name}) {
+            log_warning "Metvar missing 'name' parameter, skipping";
+            next METAVAR;
+        }
+        log_warning "$metavar->{name} has no length, skipping" unless $metavar->{length};
+        $metavar->{importance} //= "required";
+        $metavar->{status} //= "enable";
+
+        log_output "Creating metavar $metavar->{name}";
+        fmg_api_call(
+            fmg => $args{fmg},
+            method => 'set',
+            session => $session_token,
+            insecure => $args{insecure},
+            url => '/dvmdb/_meta_fields/device',
+            data => [{
+                map { $_ => $metavar->{$_} } @metavar_keys
+            }]
+        );
+    }
+}
+
+sub create_device_metavars {
+    my ($metavars) = @_;
+    my $res;
+
+    if (!defined $metavars->{device_metavars}) {
+        log_warning "No 'device_metavars' object in the JSON";
+        return;
+    }
+
+    for my $dev_metavar (@{ $metavars->{device_metavars} }) {
+        log_output "Creating metavar device mappings for device $dev_metavar->{device}";
+
+        # Perform some checks on the fields
+        for my $field (keys %{ $dev_metavar->{meta_fields} }) {
+            # Remove fields that don't exist
+            if (!grep { $_->{name} eq $field } @{ $metavars->{metavars} }) {
+                log_warning "Metavar '$field' does not exist, removing";
+                delete $dev_metavar->{meta_fields}{ $field };
+            }
+
+            # Remove fields that are disabled
+            my ($var_definition) = grep { $field eq $_->{name} } @{ $metavars->{metavars} };
+            if ($var_definition->{status} eq "disable") {
+                log_warning "Metavar '$field' is disabled, removing";
+                delete $dev_metavar->{meta_fields}{ $field };
+            }
+        }
+
+        $res = fmg_api_call(
+            fmg => $args{fmg},
+            method => 'set',
+            session => $session_token,
+            insecure => $args{insecure},
+            url => '/dvmdb/device/'.$dev_metavar->{device},
+            data => {
+                "meta fields" => $dev_metavar->{meta_fields}
+            }
+        );
+    }
+}
+
+sub dotfile_creds {
+    my $cred_path = File::Spec->canonpath( "$ENV{HOME}/.ftnt/fmg_api" );
+    my %creds;
+
+    open(my $fh, "<:encoding(UTF-8)", $cred_path) or return ();
+
+    while (my $line = <$fh>) {
+        next if $line =~ m{^\s*#};
+
+        chomp $line;
+
+        @creds{qw(username password)} = split ':', $line;
+
+        return %creds;
+    }
+
+    return ();
+}
+
+sub fmg_api_call {
+    my (%a) = @_;
+
+    # Mandatory arguments
+    croak "No 'fmg' host/IP address specified" unless $args{fmg};
+
+    #Set our defaults
+    $a{method} //= 'get';
+    $a{insecure} //= 0;
+    $a{session} //= '';
+    $a{id} //= 1;
+
+    my $ua = Mojo::UserAgent->new;
+    $ua->insecure($args{insecure});
+
+    my $res = $ua->post(
+        $a{fmg} => json => {
+            id => $a{id},
+            session => $a{session},
+            method => $a{method},
+            params => [{
+                url => $a{url},
+                data => defined $a{data} ? $a{data} : {}
+            }]
+        }
+    )->result;
+
+    if ($res->is_error) {
+        my $msg;
+        if (defined $res->json->{oauth}) {
+            $msg = join '/', values %{$res->json->{oauth}};
+        } elsif (defined $res->json->{error_message}) {
+            $msg = $res->json->{error_message};
+        } elsif (defined $res->json->{error_description}) {
+            $msg = $res->json->{error_description};
+        } else {
+            $msg = "Unknown Error";
+        }
+
+        log_error("API Error ". $msg);
+    }
+
+    if (defined $res->{error}) {
+        croak "Could not complete API call: ". $res->{error_description};
+    }
+
+    return $res->json;
+}
