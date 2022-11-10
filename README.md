@@ -9,19 +9,19 @@ version .1 (BETA)
 # SYNOPSIS
 
 ```sh
-    # Register the definitions and assignments against an FMG 
-    ./fmg_meta --fmg https://fmg.i.foletta.xyz meta.json
+# Register the definitions and assignments against an FMG 
+./fmg_meta --fmg https://fmg.i.foletta.xyz meta.json
 
-    # Insecure if the certificate is not trusted
-    ./fmg_meta --insecure --fmg https://fmg.i.foletta.xyz meta.json
+# Insecure if the certificate is not trusted
+./fmg_meta --insecure --fmg https://fmg.i.foletta.xyz meta.json
 
-    # API user/pass can be specified as ENV vars
-    export FMG_API_USER=api_user
-    export FMG_API_PASS=c0mpl3xp4ssw0rd
-    ./fmg_meta --fmg https://fmg.i.foletta.xyz meta.json
+# API user/pass can be specified as ENV vars
+export FMG_API_USER=api_user
+export FMG_API_PASS=c0mpl3xp4ssw0rd
+./fmg_meta --fmg https://fmg.i.foletta.xyz meta.json
 
-    # Or on the command line (--username and --password work as well)
-    ./fmg_meta --u api_user -p c0mpl3xp4ssw0rd --fmg https://fmg.i.foletta.xyz meta.json
+# Or on the command line (--username and --password work as well)
+./fmg_meta --u api_user -p c0mpl3xp4ssw0rd --fmg https://fmg.i.foletta.xyz meta.json
  ```
 
 # OPTIONS
