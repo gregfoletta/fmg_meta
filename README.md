@@ -8,6 +8,7 @@ version .1 (BETA)
 
 # SYNOPSIS
 
+```sh
     # Register the definitions and assignments against an FMG 
     ./fmg_meta --fmg https://fmg.i.foletta.xyz meta.json
 
@@ -21,6 +22,7 @@ version .1 (BETA)
 
     # Or on the command line (--username and --password work as well)
     ./fmg_meta --u api_user -p c0mpl3xp4ssw0rd --fmg https://fmg.i.foletta.xyz meta.json
+ ```
 
 # OPTIONS
 
