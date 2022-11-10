@@ -1,0 +1,30 @@
+{
+    "meta_fields": [
+        { 
+            "name": "site_id",
+            "length": 16
+        },
+        { 
+            "name": "loopback_ip",
+            "length": 48,
+            "importance": "required",
+            "status": "enable"
+        }
+    ],
+    "meta_field_assignment": [
+        { 
+            "device": "Test_Device",
+            "meta_fields": {
+                "site_id": "11135",
+                "loopback_ip": "1.1.4.1/32"
+            }
+        },
+        { 
+            "device": "Test_Device_2",
+            "meta_fields": {
+                "site_id": "11136",
+                "loopback_ip": "1.1.4.2/32"
+            }
+        }
+    ]
+}

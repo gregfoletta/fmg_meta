@@ -8,7 +8,7 @@ use Getopt::Long;
 use Term::ANSIColor;
 use Carp;
 use Mojo::UserAgent;
-use JSON;
+use JSON::PP;
 
 
 my %args;
@@ -17,7 +17,7 @@ GetOptions(
     'fmg=s',
     'username=s',
     'password=s',
-    'insecure',
+    'insecure|k',
     'help' => sub { pod2usage(1) }
 ) or pod2usage(2);
 
@@ -27,67 +27,53 @@ GetOptions(
 
 =head1 NAME
 
-ftnt_license_registration - extract, register, and download Fortinet licenses.
+fmg_meta - register and assign meta fields and meta variables on a FortManager
 
 =head1 VERSION
 
-version .3
+version .1 (BETA)
 
 =head1 SYNOPSIS
 
-    # Register FTNT licenses straight from zip files.
-    # FortiCloud credentials stored in ~/.ftnt/ftnt_cloud_api
-    # Licenses will be downloaded into the working directory
-    ./ftnt_license_registration ~/Documents/licenses/*.zip
+    # Register the definitions and assignments against an FMG 
+    ./fmg_meta --fmg https://fmg.i.foletta.xyz meta.json
 
-    # Specify the directory to store licenses
-    ./ftnt_license_registration --license-dir ~/Documents/licenses
-
-    # Don't download licenses, just register 
-    ./ftnt_license_registration --no-licenses
+    # Insecure if the certificate is not trusted
+    ./fmg_meta --insecure --fmg https://fmg.i.foletta.xyz meta.json
 
     # API user/pass can be specified as ENV vars
-    export FORTICLOUD_API_USERNAME='<user>'
-    export FORTICLOUD_API_PASSWORD='<pass>'
-    ./ftnt_license_registration
+    export FMG_API_USER=api_user
+    export FMG_API_PASS=c0mpl3xp4ssw0rd
+    ./fmg_meta --fmg https://fmg.i.foletta.xyz meta.json
 
-    # Or on the command line
-    ./ftnt_license_registration --username '<user>' --pasword '<pass>'
+    # Or on the command line (--username and --password work as well)
+    ./fmg_meta --u api_user -p c0mpl3xp4ssw0rd --fmg https://fmg.i.foletta.xyz meta.json
 
 =head1 OPTIONS
 
 =over
 
-=item -u|--username I<user> - the FortiCloud API username
+=item -f|--fmg I<uri> - the URI of the FortiManager API
 
-=item -p|--password I<pass> - the FortiCloud API password
+=item -u|--username I<user> - the FortiManager API username
 
-=item -l|--license-dir I<path> - the path to save registered licenses
+=item -p|--password I<pass> - the FortiManager API password
 
-=item -n|--no-licenses - don't download licenses
-
-=item -n|--ipv4-addresses - assign an IPv4 address when registering (see section below for more details)
+=item -k|--insecure - don't verify certificate 
 
 =item -h|--help - print usage information
 
 =back
 
+=head1 BETA NOTES
 
-=head1 DESCRIPTION
+Please note that this script is currently in beta. Two main things to take into account:
 
-The 'Fortinet License Registration' script allows you to easly bulk-register and download Fortinet licenses.
+=over
 
-The licenses come in email as PDFs inside zip archives. This script takes one or more zip files and
+=item The schema of the JSON file you use to define/apply the meta fields/variables may change at any time.
 
-=over 1
-
-=item Opens the zip file in memory
-
-=item Reads the PDFs inside
-
-=item Extracts the registration code
-
-=item Registers the code into the FortiCare support portal
+=item It only supports defining and assigning meta fields, not meta variables (which are new in 7.2).
 
 =back
 
@@ -95,21 +81,23 @@ The licenses come in email as PDFs inside zip archives. This script takes one or
 
 You'll need the following modules, preferably installed using the more modern L<cpanminus|https://metacpan.org/pod/App::cpanminus>:
 
-    sh$ cpanm Archive::Zip CAM::PDF Mojo::UserAgent
+    sh$ cpanm Mojo::UserAgent
 
 or the old CPAN client:
 
-    sh$ cpan Archive::Zip CAM::PDF Mojo::UserAgent
+    sh$ cpan Mojo::UserAgent
+
+=head1 JSON DEFINITION
+
+A an example C<meta.json> file has been included in this repository.
 
 =head1 AUTHENTICATION
 
-The script uses version 3 of the registration API. This uses OAuth tokens generated from IAM API username/passwords. You can create IAM users L<here|https://support.fortinet.com/iam/#/api-user>.
-
-Once you have your credentials, the script will search for them in three places:
+Once you have defined you API user on the FortiManager, the script will search for the credentials in three places:
 
 =over 
 
-=item In ~/.ftnt/ftnt_cloud_api formatted as <username>:<password>
+=item In $HOME/.ftnt/fmg_api formatted as <username>:<password>
 
 =over
 
@@ -117,7 +105,7 @@ Once you have your credentials, the script will search for them in three places:
 
 =back
 
-=item In the environment variabes C<FORTICLOUD_API_USER> and C<FORTICLOUD_API_PASSWORD>
+=item In the environment variabes C<FMG_API_USER> and C<FMG_API_PASS>
 
 =item In the command line arguments C<-u|--username> and C<-p|--password>.
 
@@ -125,40 +113,8 @@ Once you have your credentials, the script will search for them in three places:
 
 If the credentials are available in multiple places, local dotfile beats environment variable beats commandline.
 
-Note that the password appears to always have an exclaimation mark, so be sure to enclose in single quotes if you're using the environment variable or command line methods.
-
-=head1 IPv4 ADDRESSES
-
-The C<--ipv4-addresses> argument takes two different arguments: a C<file> or and C<ipv4_address>
-
-Some devices do not take an IP address (for example, FortiGates). This script will not discriminate, and will still try to apply the IP address. Recommendation it that if you're using this command, separate the licenses that require an IP into a different folder. You can this run this script across that folder with this --ipv4-addresses argument.
-
-=head2 --ipv4-addresses <file>
-
-When given a file, the script opens it and reads in each line, expecting it to be an IPv4 address. If it's not an IPv4 address, it skips the
- line. Any line starting with '#' is considered a comment and skipped.
-
-It then uses one of these IPv4 addresses in each of the license registration requests. If there 'n' licenses and 'm' IPv4 addresses in the file, then the last (n - m) licenses will not include an IPv4 addresses.
-
-=head2 --ipv4-addresses <ipv4_address>
-
-If it cannot open a file, the script will then check to see if it is an IPv4 address. It will then include this address in every license registration request. This is useful if you're registering the licenses for a lab where the IP addressing matches across each lab 'pod'.
-
-=head1 LICENSE DOWNLOAD
-
-The registration API generally returns the license keys for the codes you register with a couple of caveats:
-
-=over
-
-=item Some aren't returned, for example FortiManager licneses
-
-=item Some devices require an IP specification, which will not have been done rendering the license useless.
-
-=back
-
-You will get warnings in the console for registration codes that do not return a license.
-
 =cut
+
 
 ### Log Helpers###
 
@@ -229,13 +185,13 @@ sub create_metavars {
 
     my @metavar_keys = qw( importance length name status );
 
-    if (!defined $metavars->{metavars}) {
-        log_warning "No 'metavars' object in JSON";
+    if (!defined $metavars->{meta_fields}) {
+        log_warning "No 'meta_fields' object in JSON";
         return;
     }
 
     METAVAR:
-    for my $metavar (@{ $metavars->{metavars} }) {
+    for my $metavar (@{ $metavars->{meta_fields} }) {
         # First some checks and setting defaults
         if (!defined $metavar->{name}) {
             log_warning "Metvar missing 'name' parameter, skipping";
@@ -263,24 +219,24 @@ sub create_device_metavars {
     my ($metavars) = @_;
     my $res;
 
-    if (!defined $metavars->{device_metavars}) {
+    if (!defined $metavars->{meta_field_assignment}) {
         log_warning "No 'device_metavars' object in the JSON";
         return;
     }
 
-    for my $dev_metavar (@{ $metavars->{device_metavars} }) {
+    for my $dev_metavar (@{ $metavars->{meta_field_assignment} }) {
         log_output "Creating metavar device mappings for device $dev_metavar->{device}";
 
         # Perform some checks on the fields
         for my $field (keys %{ $dev_metavar->{meta_fields} }) {
             # Remove fields that don't exist
-            if (!grep { $_->{name} eq $field } @{ $metavars->{metavars} }) {
+            if (!grep { $_->{name} eq $field } @{ $metavars->{meta_fields} }) {
                 log_warning "Metavar '$field' does not exist, removing";
                 delete $dev_metavar->{meta_fields}{ $field };
             }
 
             # Remove fields that are disabled
-            my ($var_definition) = grep { $field eq $_->{name} } @{ $metavars->{metavars} };
+            my ($var_definition) = grep { $field eq $_->{name} } @{ $metavars->{meta_fields} };
             if ($var_definition->{status} eq "disable") {
                 log_warning "Metavar '$field' is disabled, removing";
                 delete $dev_metavar->{meta_fields}{ $field };
